@@ -1,0 +1,14 @@
+{
+    "name": "picoha-io",
+    "context": "..",
+    "dockerFile": "../Dockerfile",
+
+    "remoteUser": "builder",
+    "runArgs": ["--privileged"],
+
+    "extensions": [
+        "hbenl.vscode-test-explorer",
+        "Gruntfuggly.todo-tree",
+        "cnshenj.vscode-task-manager"
+    ]
+}

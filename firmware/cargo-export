@@ -1,0 +1,1 @@
+$CARGO_HOME/bin/elf2uf2-rs target/thumbv6m-none-eabi/debug/aardvark-rp2040-clone firmware.uf2
