@@ -1,7 +1,13 @@
 {
-    "name": "picoha-io",
+    "name": "picoha-pwm",
     "context": "..",
     "dockerFile": "../Dockerfile",
+
+    "build": {
+        "args":{
+            "SERIALGID": "20" // dialout or uucp group ID on host computer
+        }
+    },
 
     "remoteUser": "builder",
     "runArgs": ["--privileged"],
@@ -9,6 +15,12 @@
     "extensions": [
         "hbenl.vscode-test-explorer",
         "Gruntfuggly.todo-tree",
-        "cnshenj.vscode-task-manager"
+        "cnshenj.vscode-task-manager",
+        "rust-lang.rust-analyzer"
+    ],
+
+    "mounts": [
+        {"source": "/dev",                   "target": "/dev",               "type": "bind"},
+        {"source": "${localEnv:HOME}/.ssh/", "target": "/home/builder/.ssh", "type": "bind"}
     ]
 }

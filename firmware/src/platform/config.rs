@@ -1,6 +1,6 @@
 
 /// Usb Manufacturer Name
-pub const USB_MANUFACTURER_NAME: &str = "github.com/XdoctorwhoZ";
+pub const USB_MANUFACTURER_NAME: &str = "github.com/Panduza";
 
 // Usb Product Name
 // -> USB_PRODUCT_NAME is in .cargo/config

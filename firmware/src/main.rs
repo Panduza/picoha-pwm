@@ -26,25 +26,10 @@ use rp_pico::hal;
 // USB Device support
 use usb_device::class_prelude::*;
 
-// To use pin control stuff
-//use embedded_hal::digital::v2::OutputPin;
-
 // ============================================================================
 
 mod application;
 mod platform;
-
-// ============================================================================
-
-/// Application object
-//static mut APP_INSTANCE: Option<application::PicohaIo> = None;
-//
-///// USB bus allocator
-//static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-///// USB device object
-//static mut USB_DEVICE: Option<UsbDevice<hal::usb::UsbBus>> = None;
-///// USB serial object
-//static mut USB_SERIAL: Option<SerialPort<hal::usb::UsbBus>> = None;
 
 // ============================================================================
 
@@ -103,7 +88,7 @@ fn main() -> ! {
     );
 
     // Init. the app
-    let mut app = application::PicohaIo::new(
+    let mut app = application::PicohaPwm::new(
         cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()), // Append delay feature to the app
         pins,
     );
@@ -140,21 +125,6 @@ fn main() -> ! {
         }
     }
 }
-
-// ============================================================================
-
-/// This function is called whenever the USB Hardware generates an Interrupt
-/// Request.
-///
-/// We do all our USB work under interrupt, so the main thread can continue on
-/// knowing nothing about USB.
-//#[allow(non_snake_case)]
-//#[interrupt]
-//unsafe fn USBCTRL_IRQ() {
-//    //let app = APP_INSTANCE.as_mut().unwrap();
-//    //app.usbctrl_irq();
-//    USBIT_FLAG.store(true, Ordering::SeqCst);
-//}
 
 // ============================================================================
 

@@ -15,7 +15,7 @@ target = "thumbv6m-none-eabi"
 
 [env]
 USB_SERIAL_NUMBER="TEST_123456789"
-USB_PRODUCT_NAME="picoha-io"
+USB_PRODUCT_NAME="picoha-pwm"
 
 # Target specific options
 [target.thumbv6m-none-eabi]

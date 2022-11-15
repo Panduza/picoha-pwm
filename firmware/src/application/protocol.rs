@@ -12,20 +12,69 @@ pub const MAX_MSG_SIZE: usize = 128;
 /// Represents the command codes as an enum
 //#[derive(Deserialize_repr, Debug)]
 pub enum CommandCode {
-    SetDirection,
-    WriteValue,
-    ReadValue,
+    ReadPwm,
+    WritePwm,
     Test,
 }
 
 impl CommandCode {
     pub fn from_u8(x: u8) -> Option<Self> {
         match x {
-            0  => Some(Self::SetDirection),
-            1  => Some(Self::WriteValue),
-            2  => Some(Self::ReadValue),
+            0  => Some(Self::ReadPwm),
+            1  => Some(Self::WritePwm),
             10 => Some(Self::Test),
+
             _  => None
+        }
+    }
+}
+
+/// Represents the target PWM block
+#[derive(Copy, Clone)]
+pub enum Target {
+    Unknown,
+
+    Input0,
+    Input1,
+    Input2,
+    Input3,
+
+    Output0,
+    Output1,
+    Output2,
+    Output3,
+}
+
+impl Target {
+    pub fn from_u8(x: u8) -> Option<Self> {
+        match x {
+            0u8  => Some(Self::Input0 ),
+            1u8  => Some(Self::Input1 ),
+            2u8  => Some(Self::Input2 ),
+            3u8  => Some(Self::Input3 ),
+
+            10u8 => Some(Self::Output0),
+            11u8 => Some(Self::Output1),
+            12u8 => Some(Self::Output2),
+            13u8 => Some(Self::Output3),
+
+            _ => None,
+        }
+    }
+
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Self::Input0  => 0u8,
+            Self::Input1  => 1u8,
+            Self::Input2  => 2u8,
+            Self::Input3  => 3u8,
+
+            Self::Output0 => 10u8,
+            Self::Output1 => 11u8,
+            Self::Output2 => 12u8,
+            Self::Output3 => 13u8,
+
+            Self::Unknown => 255u8,
         }
     }
 }
@@ -36,11 +85,11 @@ pub struct Command {
     /// Command code as u8
     pub cod: u8,
 
-    /// id of targetted pin (X => gpioX)
-    pub pin: u8,
+    /// id of target PWM block
+    pub target: u8,
 
     /// argument value
-    pub arg: u8,
+    pub arg: f32,
 }
 
 // ============================================================================
@@ -62,69 +111,27 @@ pub struct Answer {
     /// Status code
     pub sts: AnswerStatus,
 
-    /// ID of target pin (X => gpioX)
-    pub pin: u8,
-
-    /// Argument value
-    pub arg: u8,
+    /// ID of target PWM block
+    pub target: u8,
 
     /// Text message
     pub msg: AnswerText,
 }
 
 impl Answer {
-    pub fn ok(pin: u8, arg: u8, msg: AnswerText) -> Self {
+    pub fn ok(target: Target, msg: AnswerText) -> Self {
         Self {
             sts: AnswerStatus::Ok,
-            pin: pin,
-            arg: arg,
+            target: target.to_u8(),
             msg: msg,
         }
     }
 
-    pub fn error(pin: u8, arg: u8, msg: AnswerText) -> Self {
+    pub fn error(target: Target, msg: AnswerText) -> Self {
         Self {
             sts: AnswerStatus::Error,
-            pin: pin,
-            arg: arg,
+            target: target.to_u8(),
             msg: msg,
-        }
-    }
-}
-
-// ============================================================================
-
-/// Possible argument values for pin output value
-pub enum CmdPinWriteValue {
-    Low,
-    High
-}
-
-impl CmdPinWriteValue {
-    pub fn from_u8(x: u8) -> Option<Self> {
-        match x {
-            0 => Some(Self::Low),
-            1 => Some(Self::High),
-            _ => None,
-        }
-    }
-}
-
-
-/// Possible argument values for pin direction value
-pub enum CmdPinDirValue {
-    PullUpInput,
-    PullDownInput,
-    ReadableOutput,
-}
-
-impl CmdPinDirValue {
-    pub fn from_u8(x: u8) -> Option<Self> {
-        match x {
-            0 => Some(Self::PullUpInput),
-            1 => Some(Self::PullDownInput),
-            2 => Some(Self::ReadableOutput),
-            _ => None
         }
     }
 }
