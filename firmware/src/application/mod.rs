@@ -54,12 +54,20 @@ impl PicohaPwm {
     /// Application intialization
     pub fn new(
         delay: cortex_m::delay::Delay,
-        pins: rp_pico::Pins,
+        //pins: rp_pico::Pins,
     ) -> Self {
         Self {
             delay:      delay,
             usb_buffer: UsbBuffer::new(),
         }
+    }
+
+    // -----------------------------------------------------------------------
+
+    /// Process PWM read command
+    ///
+    fn process_readpwm(&mut self, cmd: &Command) -> Answer {
+        Answer::ok(Target::Unknown, AnswerText::from_str("Coucou").unwrap())
     }
 
     // -----------------------------------------------------------------------
@@ -90,6 +98,8 @@ impl PicohaPwm {
                         match CommandCode::from_u8(data.cod) {
                             Some(x) => match x {
                                 CommandCode::Test         => Some(Answer::ok(Target::Unknown, AnswerText::from_str("").unwrap())),
+                                CommandCode::ReadPwm      => Some(self.process_readpwm(&data)),
+
                                 _  => {
                                     let mut txt = AnswerText::new();
                                     write!(txt, "Unimplemented code: {}", data.cod).unwrap();

@@ -21,10 +21,16 @@ use rp_pico::hal::pac;
 // A shorter alias for the Hardware Abstraction Layer, which provides
 // higher-level drivers.
 use rp_pico::hal;
+
+use pio;
+use pio_proc;
 // use rp_pico::hal::gpio::dynpin::DynPin;
 
 // USB Device support
 use usb_device::class_prelude::*;
+
+use rp_pico::hal::gpio::{FunctionPio0, Pin};
+use rp_pico::hal::pio::{PIOExt, PIOBuilder};
 
 // ============================================================================
 
@@ -87,10 +93,37 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    // Test PIO stuff
+    let _led: Pin<_, FunctionPio0> = pins.led.into_mode();
+    let led_pin_id = 25;
+
+    let program = pio_proc::pio_asm!(
+        ".wrap_target",
+        "set pins, 1 [31]",
+        "nop [31]",
+        "nop [31]",
+        "nop [31]",
+        "set pins, 0 [31]",
+        "nop [31]",
+        "nop [31]",
+        "nop [31]",
+        ".wrap",
+    );
+
+    let(mut pio, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
+    let installed = pio.install(&program.program).unwrap();
+    let (int,frac) = (0,0); // as slow as possible (0 is interpreted as 65536)
+    let (mut sm, _,_) = PIOBuilder::from_program(installed)
+        .set_pins(led_pin_id, 1)
+        .clock_divisor(65535.0)
+        .build(sm0);
+
+    sm.set_pindirs([(led_pin_id, hal::pio::PinDir::Output)]);
+    sm.start();
+
     // Init. the app
     let mut app = application::PicohaPwm::new(
         cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()), // Append delay feature to the app
-        pins,
     );
 
     // Run the app
