@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Serialize_repr};
 use heapless::String;
 
+use super::PIO_DIVISOR;
+
 // ============================================================================
 
 /// Max message string length in answer
 pub const MAX_MSG_SIZE: usize = 128;
+
 
 // ============================================================================
 
@@ -118,10 +121,10 @@ pub struct Answer {
     pub msg: Option<AnswerText>,
 
     /// Period value
-    pub period: Option<u32>,
+    pub highp: Option<f32>,
 
     /// Pulsewidth value
-    pub pulsewidth: Option<u32>,
+    pub lowp: Option<f32>,
 }
 
 impl Answer {
@@ -130,8 +133,8 @@ impl Answer {
             sts: AnswerStatus::Ok,
             target: target.to_u8(),
             msg: Some(msg),
-            period: None,
-            pulsewidth: None
+            highp: None,
+            lowp: None
         }
     }
 
@@ -140,18 +143,18 @@ impl Answer {
             sts: AnswerStatus::Error,
             target: target.to_u8(),
             msg: Some(msg),
-            period: None,
-            pulsewidth: None,
+            highp: None,
+            lowp: None,
         }
     }
 
-    pub fn mes_answer(target: Target, period: u32, pulsewidth: u32) -> Self {
+    pub fn mes_answer(target: Target, highp: f32, lowp: f32) -> Self {
         Self {
             sts: AnswerStatus::Ok,
             target: target.to_u8(),
             msg: None,
-            period: Some(period),
-            pulsewidth: Some(pulsewidth),
+            highp: Some(highp),
+            lowp: Some(lowp),
         }
     }
 }

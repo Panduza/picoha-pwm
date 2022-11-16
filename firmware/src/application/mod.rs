@@ -18,6 +18,8 @@ use protocol::{Answer, AnswerText, Command, CommandCode, Target};
 mod gpio_ctrl;
 use gpio_ctrl::GpioController;
 
+const PIO_DIVISOR: f32 = 62.5; // Divisor to convert count cycles -> us
+
 // ============================================================================
 
 enum CmdError {
@@ -77,7 +79,10 @@ impl PicohaPwm {
     /// Process PWM read command
     ///
     fn process_readpwm(&self, _cmd: &Command) -> Answer {
-        Answer::mes_answer(Target::Unknown, self.period, self.pulsewidth)
+        let highp = (self.period as f32) / PIO_DIVISOR;
+        let lowp = (self.pulsewidth as f32) / PIO_DIVISOR;
+
+        Answer::mes_answer(Target::Unknown, highp, lowp)
     }
 
     // -----------------------------------------------------------------------
