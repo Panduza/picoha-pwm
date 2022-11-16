@@ -4,6 +4,7 @@
 // The macro for our start-up function
 use cortex_m_rt::entry;
 
+use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::digital::v2::ToggleableOutputPin;
 // Time handling traits
 use embedded_time::rate::*;
@@ -41,20 +42,25 @@ use rp_pico::hal::pac::interrupt;
 
 use rp_pico::hal::pio::{StateMachine, StateMachineIndex};
 
+use core::cell::RefCell;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use spin::Mutex;
+
 // ============================================================================
 
 mod application;
 mod platform;
 
 // ============================================================================
-//scoped_interrupts! {
-//    #[allow(non_camel_case_types)]
-//    enum Interrupts {
-//        PIO0_IRQ_0,
-//    }
-//
-//    use #[interrupt];
-//}
+scoped_interrupts! {
+    #[allow(non_camel_case_types)]
+    enum Interrupt {
+        PIO0_IRQ_0,
+    }
+
+    use #[interrupt];
+}
 // ============================================================================
 
 /// Entry point to our bare-metal application.
@@ -140,6 +146,8 @@ fn main() -> ! {
         .build(sm0);
 
     let it0 = pio0.interrupts().get(0).unwrap();
+
+    let pio0_mtx = Mutex::new(pio);
     
     //===============================================
 
@@ -148,58 +156,91 @@ fn main() -> ! {
         cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()) // Append delay feature to the app
     );
 
-    // Start PIO
-    it0.enable_sm_interrupt(0);
-    sm0.start();
+    // Define handlers
+    let mut period = AtomicU32::new(0);
+    let mut pulsewidth = AtomicU32::new(0);
 
-    let mut ans_buffer = [0u8; 1024];
-    loop {
-        // Poll PIO
-        if it0.state().sm0()  {
+    handler!(pio0_isr = || {
+        //if let Some(x) = rx0.read() {
+        //    period.store(x, Ordering::Relaxed);
+        //}
 
-            if let Some(x) = rx0.read() {
-                app.period = x;
-                led.toggle().unwrap();
+        //if let Some(x) = rx0.read() {
+        //    pulsewidth.store(x, Ordering::Relaxed);
+        //}
+
+        let mut pio0 = pio0_mtx.lock();
+        *pio0.clear_irq(0x1);
+    });
+
+
+    scope(|scope| {
+        scope.register(Interrupt::PIO0_IRQ_0, pio0_isr);
+
+        // Start PIO
+        it0.enable_sm_interrupt(0);
+
+        // Unmask PIO interrupt
+        unsafe {
+            pac::NVIC::unmask(hal::pac::Interrupt::PIO0_IRQ_0);
+        };
+
+        sm0.start();
+
+        let mut ans_buffer = [0u8; 1024];
+        loop {
+            cortex_m::asm::wfi();
+            // Poll PIO
+            //app.period     = period.load(Ordering::Relaxed);
+            //app.pulsewidth = pulsewidth.load(Ordering::Relaxed);
+
+            if it0.state().sm0()  {
+                led.toggle().ok();
             }
+            //    if let Some(x) = rx0.read() {
+            //        app.period = x;
+            //        led.toggle().unwrap();
+            //    }
 
-            if let Some(x) = rx0.read() {
-                app.pulsewidth = x;
-                led.toggle().unwrap();
-            }
+            //    if let Some(x) = rx0.read() {
+            //        app.pulsewidth = x;
+            //        led.toggle().unwrap();
+            //    }
 
-            // Get period data from fifo
-            //app.period     = rx0.read().unwrap();
-            //app.pulsewidth = rx0.read().unwrap();
+            //    // Get period data from fifo
+            //    //app.period     = rx0.read().unwrap();
+            //    //app.pulsewidth = rx0.read().unwrap();
+            //}
+
+            // Update USB
+            //if usb_device.poll(&mut [&mut usb_serial]) {
+            //    let mut buf = [0u8; 1024];
+            //    match usb_serial.read(&mut buf) {
+            //        Err(_) => {}
+            //        Ok(0)  => {}
+
+            //        Ok(count) => {
+            //            app.feed_cmd_buffer(&buf, count);
+            //        }
+            //    }
+            //}
+
+            //// Update app command process
+            //match app.update_command_processing() {
+            //    None           => {},
+            //    Some(response) => {
+            //        match serde_json_core::to_slice(&response, &mut ans_buffer) {
+            //            Ok(size) => {
+            //                ans_buffer[size] = '\n' as u8;
+            //                usb_serial.write(&ans_buffer[0..(size+1)]).unwrap();
+            //            }
+
+            //            Err(_) => {} // Ignore errors for now
+            //        }
+            //    }
+            //}
         }
-
-        // Update USB
-        if usb_device.poll(&mut [&mut usb_serial]) {
-            let mut buf = [0u8; 1024];
-            match usb_serial.read(&mut buf) {
-                Err(_) => {}
-                Ok(0)  => {}
-
-                Ok(count) => {
-                    app.feed_cmd_buffer(&buf, count);
-                }
-            }
-        }
-
-        // Update app command process
-        match app.update_command_processing() {
-            None           => {},
-            Some(response) => {
-                match serde_json_core::to_slice(&response, &mut ans_buffer) {
-                    Ok(size) => {
-                        ans_buffer[size] = '\n' as u8;
-                        usb_serial.write(&ans_buffer[0..(size+1)]).unwrap();
-                    }
-
-                    Err(_) => {} // Ignore errors for now
-                }
-            }
-        }
-    }
+    })
 }
 
 // ============================================================================

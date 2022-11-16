@@ -16,7 +16,6 @@ use protocol::{Answer, AnswerText, Command, CommandCode, Target};
 
 // GPIO Control
 mod gpio_ctrl;
-use gpio_ctrl::GpioController;
 
 const PIO_DIVISOR: f32 = 62.5; // Divisor to convert count cycles -> us
 
