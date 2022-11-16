@@ -42,6 +42,13 @@ pub struct PicohaPwm {
 
     /// Buffer to hold incomnig data
     usb_buffer: UsbBuffer<512>,
+
+
+    /// Period value
+    pub period: u32,
+
+    /// Pulsewidth value
+    pub pulsewidth: u32,
 }
 
 // ============================================================================
@@ -59,6 +66,9 @@ impl PicohaPwm {
         Self {
             delay:      delay,
             usb_buffer: UsbBuffer::new(),
+
+            period: 0,
+            pulsewidth: 0,
         }
     }
 
@@ -66,8 +76,8 @@ impl PicohaPwm {
 
     /// Process PWM read command
     ///
-    fn process_readpwm(&mut self, cmd: &Command) -> Answer {
-        Answer::ok(Target::Unknown, AnswerText::from_str("Coucou").unwrap())
+    fn process_readpwm(&self, _cmd: &Command) -> Answer {
+        Answer::mes_answer(Target::Unknown, self.period, self.pulsewidth)
     }
 
     // -----------------------------------------------------------------------

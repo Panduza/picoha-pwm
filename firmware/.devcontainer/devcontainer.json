@@ -16,7 +16,8 @@
         "hbenl.vscode-test-explorer",
         "Gruntfuggly.todo-tree",
         "cnshenj.vscode-task-manager",
-        "rust-lang.rust-analyzer"
+        "rust-lang.rust-analyzer",
+        "chris-hock.pioasm"
     ],
 
     "mounts": [

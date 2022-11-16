@@ -115,7 +115,13 @@ pub struct Answer {
     pub target: u8,
 
     /// Text message
-    pub msg: AnswerText,
+    pub msg: Option<AnswerText>,
+
+    /// Period value
+    pub period: Option<u32>,
+
+    /// Pulsewidth value
+    pub pulsewidth: Option<u32>,
 }
 
 impl Answer {
@@ -123,7 +129,9 @@ impl Answer {
         Self {
             sts: AnswerStatus::Ok,
             target: target.to_u8(),
-            msg: msg,
+            msg: Some(msg),
+            period: None,
+            pulsewidth: None
         }
     }
 
@@ -131,7 +139,19 @@ impl Answer {
         Self {
             sts: AnswerStatus::Error,
             target: target.to_u8(),
-            msg: msg,
+            msg: Some(msg),
+            period: None,
+            pulsewidth: None,
+        }
+    }
+
+    pub fn mes_answer(target: Target, period: u32, pulsewidth: u32) -> Self {
+        Self {
+            sts: AnswerStatus::Ok,
+            target: target.to_u8(),
+            msg: None,
+            period: Some(period),
+            pulsewidth: Some(pulsewidth),
         }
     }
 }

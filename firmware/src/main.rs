@@ -4,6 +4,7 @@
 // The macro for our start-up function
 use cortex_m_rt::entry;
 
+use embedded_hal::digital::v2::ToggleableOutputPin;
 // Time handling traits
 use embedded_time::rate::*;
 
@@ -11,6 +12,8 @@ use embedded_time::rate::*;
 // be linked)
 // use panic_halt as _;
 
+use rp_pico::hal::gpio::PushPullOutput;
+use rp_pico::hal::pio::ValidStateMachine;
 // Pull in any important traits
 use rp_pico::hal::prelude::*;
 
@@ -23,7 +26,7 @@ use rp_pico::hal::pac;
 use rp_pico::hal;
 
 use pio;
-use pio_proc;
+use pio_proc::pio_file;
 // use rp_pico::hal::gpio::dynpin::DynPin;
 
 // USB Device support
@@ -32,11 +35,26 @@ use usb_device::class_prelude::*;
 use rp_pico::hal::gpio::{FunctionPio0, Pin};
 use rp_pico::hal::pio::{PIOExt, PIOBuilder};
 
+use irq::{handler, scope, scoped_interrupts};
+
+use rp_pico::hal::pac::interrupt;
+
+use rp_pico::hal::pio::{StateMachine, StateMachineIndex};
+
 // ============================================================================
 
 mod application;
 mod platform;
 
+// ============================================================================
+//scoped_interrupts! {
+//    #[allow(non_camel_case_types)]
+//    enum Interrupts {
+//        PIO0_IRQ_0,
+//    }
+//
+//    use #[interrupt];
+//}
 // ============================================================================
 
 /// Entry point to our bare-metal application.
@@ -93,42 +111,67 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // Test PIO stuff
-    let _led: Pin<_, FunctionPio0> = pins.led.into_mode();
-    let led_pin_id = 25;
+    //===============================================
+    // Test for PIO PWM Input
+    //===============================================
 
-    let program = pio_proc::pio_asm!(
-        ".wrap_target",
-        "set pins, 1 [31]",
-        "nop [31]",
-        "nop [31]",
-        "nop [31]",
-        "set pins, 0 [31]",
-        "nop [31]",
-        "nop [31]",
-        "nop [31]",
-        ".wrap",
-    );
+    let (mut pio0, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
+    let program   = pio_file!("src/application/freqmeter.pio", select_program("freqmeter"),);
+    let installed = pio0.install(&program.program).unwrap();
 
-    let(mut pio, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
-    let installed = pio.install(&program.program).unwrap();
-    let (int,frac) = (0,0); // as slow as possible (0 is interpreted as 65536)
-    let (mut sm, _,_) = PIOBuilder::from_program(installed)
-        .set_pins(led_pin_id, 1)
-        .clock_divisor(65535.0)
+    let _in0: hal::gpio::Pin<_, FunctionPio0> = pins.gpio14.into_mode();
+    let _in1: hal::gpio::Pin<_, FunctionPio0> = pins.gpio15.into_mode();
+    let _in2: hal::gpio::Pin<_, FunctionPio0> = pins.gpio18.into_mode();
+    let _in3: hal::gpio::Pin<_, FunctionPio0> = pins.gpio19.into_mode();
+
+    let in0_id = 14u8;
+    //let in1_id = 15u8;
+    //let in2_id = 18u8;
+    //let in3_id = 19u8;
+
+    let mut led: hal::gpio::Pin<_, PushPullOutput> = pins.led.into_mode();
+
+    let builder = PIOBuilder::from_program(installed);
+
+    let (sm0, mut rx0, _) = builder
+        .jmp_pin(in0_id)
+        .in_pin_base(in0_id)
+        .clock_divisor(1.0)
         .build(sm0);
 
-    sm.set_pindirs([(led_pin_id, hal::pio::PinDir::Output)]);
-    sm.start();
+    let it0 = pio0.interrupts().get(0).unwrap();
+    
+    //===============================================
 
     // Init. the app
     let mut app = application::PicohaPwm::new(
-        cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()), // Append delay feature to the app
+        cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()) // Append delay feature to the app
     );
 
-    // Run the app
+    // Start PIO
+    it0.enable_sm_interrupt(0);
+    sm0.start();
+
     let mut ans_buffer = [0u8; 1024];
     loop {
+        // Poll PIO
+        if it0.state().sm0()  {
+
+            if let Some(x) = rx0.read() {
+                app.period = x;
+                led.toggle().unwrap();
+            }
+
+            if let Some(x) = rx0.read() {
+                app.pulsewidth = x;
+                led.toggle().unwrap();
+            }
+
+            // Get period data from fifo
+            //app.period     = rx0.read().unwrap();
+            //app.pulsewidth = rx0.read().unwrap();
+        }
+
         // Update USB
         if usb_device.poll(&mut [&mut usb_serial]) {
             let mut buf = [0u8; 1024];

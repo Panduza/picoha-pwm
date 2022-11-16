@@ -1,5 +1,5 @@
 [package]
-name = "aardvark-rp2040-clone"
+name = "picoha-pwm"
 version = "0.1.0"
 edition = "2021"
 
