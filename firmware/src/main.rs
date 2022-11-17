@@ -42,11 +42,7 @@ use rp_pico::hal::pac::interrupt;
 
 use rp_pico::hal::pio::{StateMachine, StateMachineIndex};
 
-use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
-
-use rp_pico::hal::pio::PIO;
-use rp_pico::pac::PIO0;
 
 // ============================================================================
 
@@ -55,19 +51,8 @@ mod platform;
 
 // ============================================================================
 
-use core::cell::UnsafeCell;
 use cortex_m::interrupt as cmit;
-
-struct CSPio(UnsafeCell<PIO<PIO0>>);
-
-impl CSPio {
-    pub fn clear_irq(&mut self, flags: u8, _cs: &cmit::CriticalSection) {
-        unsafe { self.0.get_mut().clear_irq(flags) };
-    }
-}
-
-unsafe impl Sync for CSPio {}
-
+use cortex_m::interrupt::Mutex;
 
 // ============================================================================
 scoped_interrupts! {
@@ -162,7 +147,7 @@ fn main() -> ! {
         .clock_divisor(1.0)
         .build(sm0);
 
-    let mut cs_pio = CSPio(UnsafeCell::new(pio0));
+    let pio_mtx = Mutex::new(pio0);
     
     //===============================================
 
@@ -175,7 +160,6 @@ fn main() -> ! {
     let mut period = AtomicU32::new(0);
     let mut pulsewidth = AtomicU32::new(0);
 
-    cs_pio.0.get_mut().interrupts().get(0).unwrap().enable_sm_interrupt(0);
 
     handler!(pio0_isr = || {
         if let Some(x) = rx0.read() {
@@ -187,7 +171,7 @@ fn main() -> ! {
         }
 
         led.toggle().ok();
-        cmit::free(|cs| cs_pio.clear_irq(0x1, cs));
+        cmit::free(|cs| pio_mtx.borrow(cs).clear_irq(0x1));
     });
 
 
@@ -199,6 +183,9 @@ fn main() -> ! {
             pac::NVIC::unmask(hal::pac::Interrupt::PIO0_IRQ_0);
         };
 
+        // Enable interrupt
+        cmit::free(|cs| pio_mtx.borrow(cs).interrupts().get(0).unwrap().enable_sm_interrupt(0));
+
         sm0.start();
 
         let mut ans_buffer = [0u8; 1024];
@@ -206,21 +193,6 @@ fn main() -> ! {
             // Poll PIO
             app.period     = period.load(Ordering::Relaxed);
             app.pulsewidth = pulsewidth.load(Ordering::Relaxed);
-
-            //    if let Some(x) = rx0.read() {
-            //        app.period = x;
-            //        led.toggle().unwrap();
-            //    }
-
-            //    if let Some(x) = rx0.read() {
-            //        app.pulsewidth = x;
-            //        led.toggle().unwrap();
-            //    }
-
-            //    // Get period data from fifo
-            //    //app.period     = rx0.read().unwrap();
-            //    //app.pulsewidth = rx0.read().unwrap();
-            //}
 
             // Update USB
             if usb_device.poll(&mut [&mut usb_serial]) {
