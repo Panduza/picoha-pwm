@@ -18,6 +18,9 @@ RUN addgroup dialout --gid ${SERIALGID}
 RUN adduser builder
 RUN usermod -aG dialout builder
 
+# Configure sudo
+RUN echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
 # Install toolchain
 RUN rustup target install thumbv6m-none-eabi
 

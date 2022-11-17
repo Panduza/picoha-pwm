@@ -591,7 +591,6 @@ dependencies = [
  "serde",
  "serde-json-core",
  "serde_repr",
- "spin",
  "usb-device",
  "usbd-hid",
  "usbd-serial",
