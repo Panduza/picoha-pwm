@@ -162,12 +162,16 @@ fn main() -> ! {
 
 
     handler!(pio0_isr = || {
-        if let Some(x) = rx0.read() {
-            period.store(x, Ordering::Relaxed);
-        }
+        let it_state  = cmit::free(|cs| pio_mtx.borrow(cs).interrupts().get(0).unwrap().state());
 
-        if let Some(x) = rx0.read() {
-            pulsewidth.store(x, Ordering::Relaxed);
+        if(it_state.sm0()) {
+            if let Some(x) = rx0.read() {
+                period.store(x, Ordering::Relaxed);
+            }
+
+            if let Some(x) = rx0.read() {
+                pulsewidth.store(x, Ordering::Relaxed);
+            }
         }
 
         led.toggle().ok();
@@ -184,7 +188,10 @@ fn main() -> ! {
         };
 
         // Enable interrupt
-        cmit::free(|cs| pio_mtx.borrow(cs).interrupts().get(0).unwrap().enable_sm_interrupt(0));
+        cmit::free(|cs| {
+            let it = pio_mtx.borrow(cs).interrupts().get(0).unwrap();
+            it.enable_sm_interrupt(0)
+        });
 
         sm0.start();
 
