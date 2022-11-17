@@ -34,6 +34,9 @@ enum CmdError {
 mod buffer;
 use buffer::UsbBuffer;
 
+mod freqmeter;
+use freqmeter::{FrequencyMeter, FrequencyMeterPort};
+
 // ============================================================================
 
 /// Store all the usefull objects for the application

@@ -125,6 +125,7 @@ fn main() -> ! {
 
     let (mut pio0, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
     let program   = pio_file!("src/application/freqmeter.pio", select_program("freqmeter"),);
+
     let installed = pio0.install(&program.program).unwrap();
 
     let _in0: hal::gpio::Pin<_, FunctionPio0> = pins.gpio14.into_mode();
