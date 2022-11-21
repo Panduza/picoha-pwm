@@ -1,7 +1,9 @@
 /// Simple frequency meter using a PIO program
+/// Florian Dupeyron <florian.dupeyron@mugcat.fr>, November 2022
 /// See https://github.com/GitJer/Some_RPI-Pico_stuff/blob/main/PwmIn/PwmIn_4pins/
 
-use irq::{handler, scope, Handler, Scope};
+use cortex_m::interrupt::CriticalSection;
+
 use rp_pico::hal::{pio::{
     PIOExt,
     PIOBuilder,
@@ -14,22 +16,32 @@ use rp_pico::hal::{pio::{
 
     Stopped,
     Running
-}, gpio::{FunctionConfig, PinId, ValidPinMode, PinMode}};
+}, gpio::{PinId, ValidPinMode, PinMode}};
 
 use rp_pico::hal;
 
 use pio_proc::pio_file;
 
-use rp_pico::hal::gpio::pin::Function;
-use serde::de::value::UnitDeserializer;
+use core::sync::atomic::{AtomicU32, Ordering};
+use core::cell::Cell;
 
-use core::sync::atomic::AtomicU32;
+
+const PIO_DIVISOR: f32 = 125.0 / 2.0; // Divisor to transform tick count into microseconds
 
 // =========================================================
 enum StateMachineVariant<SM: ValidStateMachine> {
+    Empty,
     Stopped(StateMachine<SM, Stopped>),
     Running(StateMachine<SM, Running>),
 }
+
+impl<SM: ValidStateMachine> Default for StateMachineVariant<SM> {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+// =========================================================
 
 //pub struct FrequencyMeterPort<P: PIOExt, SM: StateMachineIndex, PinFunction: FunctionConfig> {
 pub struct FrequencyMeterPort<P, SM, Index, Mode> 
@@ -43,16 +55,17 @@ where
     pin: rp_pico::hal::gpio::Pin<Index, Mode>,
     
     /// PIO State machine instance
-    sm: StateMachineVariant<(P,SM)>,
+    //sm: StateMachine<(P, SM), Stopped>,
+    sm: Cell<StateMachineVariant<(P,SM)>>,
 
     /// RX Fifo instance
     rx: Rx<(P,SM)>,
 
-    /// Read pulsewidth value from PIO
-    pulsewidth: AtomicU32,
+    /// High period tick count
+    highp: AtomicU32,
 
-    /// Read period value from PIO
-    period: AtomicU32,
+    /// Low period tick count
+    lowp: AtomicU32,
 }
 
 impl<P, SM, Index, Mode> FrequencyMeterPort<P, SM, Index, Mode>
@@ -64,50 +77,72 @@ where
 {
     pub fn new(
         installed: &InstalledProgram<P>,
-        mut pin: hal::gpio::Pin<Index, Mode>,
-        idx: u8,
-        mut sm: UninitStateMachine<(P,SM)>
+        pin: hal::gpio::Pin<Index, Mode>,
+        sm: UninitStateMachine<(P,SM)>
     ) -> Self
     {
         unsafe {
             // Build program in state machine
-            let (sm, mut rx, _) = PIOBuilder::from_program(installed.share())
+            let (sm, rx, _) = PIOBuilder::from_program(installed.share())
                 .clock_divisor(0.0)
-                .jmp_pin(idx)
-                .in_pin_base(idx)
+                .jmp_pin(Index::DYN.num)
+                .in_pin_base(Index::DYN.num)
                 .build(sm);
 
             Self {
                 pin,
-                sm: StateMachineVariant::Stopped(sm),
+                sm: Cell::new(StateMachineVariant::Stopped(sm)),
                 rx,
-                pulsewidth: AtomicU32::new(0),
-                period: AtomicU32::new(0),
+                highp: AtomicU32::new(0),
+                lowp: AtomicU32::new(0),
             }
         }
     }
 
     pub fn start(&mut self) {
-        if let StateMachineVariant::Stopped(sm) = self.sm {
-            self.sm = StateMachineVariant::Running(sm.start());
+        let sm = self.sm.take();
+        
+        if let StateMachineVariant::Stopped(sm) = sm {
+            self.sm.replace(StateMachineVariant::Running(sm.start()));
         }
     }
 
     pub fn stop(&mut self) {
-        if let StateMachineVariant::Running(sm) = self.sm {
-            self.sm = StateMachineVariant::Stopped(sm.stop());
+        let sm = self.sm.take();
+
+        if let StateMachineVariant::Running(sm) = sm {
+            self.sm.replace(StateMachineVariant::Stopped(sm.stop()));
         }
     }
+
+    pub fn irq_handler(&mut self) {
+        if let Some(x) = self.rx.read() {
+            self.highp.store(x, Ordering::Relaxed);
+        }
+
+        if let Some(x) = self.rx.read() {
+            self.lowp.store(x, Ordering::Relaxed);
+        }
+    }
+
+    pub fn highp_us(&self) -> f32 {
+        (self.highp.load(Ordering::Relaxed) as f32) / PIO_DIVISOR
+    }
+
+    pub fn lowp_us(&self) -> f32 {
+        (self.lowp.load(Ordering::Relaxed) as f32) / PIO_DIVISOR
+    }
+
 }
 
 trait CheckPortInterrupt {
-    fn check_it(it: &hal::pio::InterruptState) -> bool;
+    fn check_it(&self, it: &hal::pio::InterruptState) -> bool;
 }
 
 macro_rules! impl_check_it {
     ($smi: path, $smf: ident) => {
         impl<P: PIOExt, I: PinId, M: PinMode + ValidPinMode<I>> CheckPortInterrupt for FrequencyMeterPort<P, $smi, I, M> {
-            fn check_it(it: &hal::pio::InterruptState) -> bool {
+            fn check_it(&self, it: &hal::pio::InterruptState) -> bool {
                 it.$smf()
             }
         }
@@ -120,10 +155,6 @@ impl_check_it!(hal::pio::SM2, sm2);
 impl_check_it!(hal::pio::SM3, sm3);
 
 // =========================================================
-
-pub trait IndexedPin<I: PinId, M: ValidPinMode> {
-
-}
 
 pub struct FrequencyMeter<P,I0,I1,I2,I3,M0,M1,M2,M3>
 where
@@ -140,22 +171,22 @@ where
     M3: PinMode + ValidPinMode<I3>,
 {
     /// Instance of PIO periperhal
-    pio: P,
+    pio: cortex_m::interrupt::Mutex<hal::pio::PIO<P>>,
 
     /// Instance of the installed program
     installed: InstalledProgram<P>,
 
     /// First port instance
-    port0: FrequencyMeterPort<P,hal::pio::SM0,I0,M0>,
+    pub port0: FrequencyMeterPort<P,hal::pio::SM0,I0,M0>,
 
     /// Second port instance
-    port1: FrequencyMeterPort<P,hal::pio::SM1,I1,M1>,
+    pub port1: FrequencyMeterPort<P,hal::pio::SM1,I1,M1>,
 
     /// Third port instance
-    port2: FrequencyMeterPort<P,hal::pio::SM2,I2,M2>,
+    pub port2: FrequencyMeterPort<P,hal::pio::SM2,I2,M2>,
 
     /// Fourth port instance
-    port3: FrequencyMeterPort<P,hal::pio::SM3,I3,M3>,
+    pub port3: FrequencyMeterPort<P,hal::pio::SM3,I3,M3>,
 }
 
 impl<P,I0,I1,I2,I3,M0,M1,M2,M3> FrequencyMeter<P,I0,I1,I2,I3,M0,M1,M2,M3>
@@ -180,28 +211,54 @@ where
         pin1: hal::gpio::Pin<I1, M1>,
         pin2: hal::gpio::Pin<I2, M2>,
         pin3: hal::gpio::Pin<I3, M3>,
-
-        pin_id0: u8,
-        pin_id1: u8,
-        pin_id2: u8,
-        pin_id3: u8,
     ) -> Self {
-        let (mut pio0, sm0, sm1, sm2, sm3) = pio.split(resets);
+        let (mut pio, sm0, sm1, sm2, sm3) = pio.split(resets);
 
         // Install PIO program
         let program = pio_file!("./src/application/freqmeter.pio", select_program("freqmeter"),);
         let installed = pio.install(&program.program).unwrap();
 
+        let port0 = FrequencyMeterPort::new(&installed, pin0, sm0);
+        let port1 = FrequencyMeterPort::new(&installed, pin1, sm1);
+        let port2 = FrequencyMeterPort::new(&installed, pin2, sm2);
+        let port3 = FrequencyMeterPort::new(&installed, pin3, sm3);
+
         // Return structure
         Self {
-            pio,
+            pio: cortex_m::interrupt::Mutex::new(pio),
             installed,
-
-            port0: FrequencyMeterPort::new()
+            port0,
+            port1,
+            port2,
+            port3,
         }
     }
 
-    fn irq_handler(&mut self) {
-        // TODO //
+    pub fn irq_handler(&mut self, cs: &CriticalSection) {
+        let pio = self.pio.borrow(cs);
+        let state = pio.interrupts().get(0).unwrap().state();
+
+        if self.port0.check_it(&state) {
+            self.port0.irq_handler();
+        }
+
+        if self.port1.check_it(&state) {
+            self.port1.irq_handler();
+        }
+
+        if self.port2.check_it(&state) {
+            self.port2.irq_handler();
+        }
+
+        if self.port3.check_it(&state) {
+            self.port3.irq_handler();
+        }
+
+        pio.clear_irq(pio.get_irq_raw());
+    }
+
+    pub fn irq_enable(&mut self, cs: &CriticalSection) {
+        let pio = self.pio.borrow(cs);
+        pio.interrupts().get(0).unwrap().enable_sm_interrupt(0);
     }
 }

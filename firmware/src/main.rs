@@ -9,12 +9,14 @@ use embedded_hal::digital::v2::ToggleableOutputPin;
 // Time handling traits
 use embedded_time::rate::*;
 
+use core::borrow::BorrowMut;
+
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
 // use panic_halt as _;
 
 use rp_pico::hal::gpio::PushPullOutput;
-use rp_pico::hal::pio::ValidStateMachine;
+
 // Pull in any important traits
 use rp_pico::hal::prelude::*;
 
@@ -49,10 +51,16 @@ use core::sync::atomic::{AtomicU32, Ordering};
 mod application;
 mod platform;
 
+use application::PicohaPwm;
+
+
+
 // ============================================================================
 
 use cortex_m::interrupt as cmit;
-use cortex_m::interrupt::Mutex;
+use cortex_m::interrupt::CriticalSection;
+
+use core::cell::UnsafeCell;
 
 // ============================================================================
 scoped_interrupts! {
@@ -64,6 +72,24 @@ scoped_interrupts! {
     use #[interrupt];
 }
 // ============================================================================
+
+struct AppCell(UnsafeCell<PicohaPwm>);
+
+unsafe impl Sync for AppCell {}
+
+impl AppCell {
+    pub fn new(app: PicohaPwm) -> Self {
+        Self(UnsafeCell::new(app))
+    }
+
+    pub fn action<F>(&self, func: F, _cs: &CriticalSection)
+        where F: FnOnce(PicohaPwm) -> ()
+    {
+        unsafe { func(*self.0.get()) };
+    }
+
+    pub fn update_command_processing(&self, _cs:&CriticalSection) -> 
+}
 
 /// Entry point to our bare-metal application.
 ///
@@ -123,60 +149,18 @@ fn main() -> ! {
     // Test for PIO PWM Input
     //===============================================
 
-    let (mut pio0, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
-    let program   = pio_file!("src/application/freqmeter.pio", select_program("freqmeter"),);
-
-    let installed = pio0.install(&program.program).unwrap();
-
-    let _in0: hal::gpio::Pin<_, FunctionPio0> = pins.gpio14.into_mode();
-    let _in1: hal::gpio::Pin<_, FunctionPio0> = pins.gpio15.into_mode();
-    let _in2: hal::gpio::Pin<_, FunctionPio0> = pins.gpio18.into_mode();
-    let _in3: hal::gpio::Pin<_, FunctionPio0> = pins.gpio19.into_mode();
-
-    let in0_id = 14u8;
-    //let in1_id = 15u8;
-    //let in2_id = 18u8;
-    //let in3_id = 19u8;
-
-    let mut led: hal::gpio::Pin<_, PushPullOutput> = pins.led.into_mode();
-
-    let builder = PIOBuilder::from_program(installed);
-
-    let (sm0, mut rx0, _) = builder
-        .jmp_pin(in0_id)
-        .in_pin_base(in0_id)
-        .clock_divisor(1.0)
-        .build(sm0);
-
-    let pio_mtx = Mutex::new(pio0);
-    
-    //===============================================
-
     // Init. the app
     let mut app = application::PicohaPwm::new(
-        cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()) // Append delay feature to the app
+        &mut pac.RESETS,
+        pac.PIO0,
+        pins,
     );
 
+    let mut app = AppCell::new(app);
+
     // Define handlers
-    let mut period = AtomicU32::new(0);
-    let mut pulsewidth = AtomicU32::new(0);
-
-
     handler!(pio0_isr = || {
-        let it_state  = cmit::free(|cs| pio_mtx.borrow(cs).interrupts().get(0).unwrap().state());
-
-        if(it_state.sm0()) {
-            if let Some(x) = rx0.read() {
-                period.store(x, Ordering::Relaxed);
-            }
-
-            if let Some(x) = rx0.read() {
-                pulsewidth.store(x, Ordering::Relaxed);
-            }
-        }
-
-        led.toggle().ok();
-        cmit::free(|cs| pio_mtx.borrow(cs).clear_irq(0x1));
+        cmit::free(|cs| app.action(|x| x.freqmeter.irq_handler(cs), cs));
     });
 
 
@@ -190,18 +174,20 @@ fn main() -> ! {
 
         // Enable interrupt
         cmit::free(|cs| {
-            let it = pio_mtx.borrow(cs).interrupts().get(0).unwrap();
-            it.enable_sm_interrupt(0)
+            app.action(|app| app.freqmeter.irq_enable(cs), cs);
         });
 
-        sm0.start();
+        cmit::free(|cs| {
+            app.action(|app| {
+                app.freqmeter.port0.start();
+                app.freqmeter.port1.start();
+                app.freqmeter.port2.start();
+                app.freqmeter.port3.start();
+            }, cs)
+        });
 
         let mut ans_buffer = [0u8; 1024];
         loop {
-            // Poll PIO
-            app.period     = period.load(Ordering::Relaxed);
-            app.pulsewidth = pulsewidth.load(Ordering::Relaxed);
-
             // Update USB
             if usb_device.poll(&mut [&mut usb_serial]) {
                 let mut buf = [0u8; 1024];
@@ -210,13 +196,13 @@ fn main() -> ! {
                     Ok(0)  => {}
 
                     Ok(count) => {
-                        app.feed_cmd_buffer(&buf, count);
+                        cmit::free(|cs| app.action(|app| app.feed_cmd_buffer(&buf, count), cs));
                     }
                 }
             }
 
             // Update app command process
-            match app.update_command_processing() {
+            match cmit::free(|cs| app.action(|app| app.update_command_processing())) {
                 None           => {},
                 Some(response) => {
                     match serde_json_core::to_slice(&response, &mut ans_buffer) {

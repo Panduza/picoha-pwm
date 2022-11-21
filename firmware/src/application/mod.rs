@@ -1,8 +1,6 @@
 // ============================================================================
 
 // HAL
-use embedded_hal::digital::v2::OutputPin;
-
 use rp_pico::hal;
 
 // Algos
@@ -10,12 +8,13 @@ use core::str::FromStr;
 use core::write;
 use core::fmt::Write;
 
+// Frequency meter
+mod freqmeter;
+use freqmeter::FrequencyMeter;
+
 // Protocol
 mod protocol;
 use protocol::{Answer, AnswerText, Command, CommandCode, Target};
-
-// GPIO Control
-mod gpio_ctrl;
 
 const PIO_DIVISOR: f32 = 62.5; // Divisor to convert count cycles -> us
 
@@ -34,42 +33,58 @@ enum CmdError {
 mod buffer;
 use buffer::UsbBuffer;
 
-mod freqmeter;
-use freqmeter::{FrequencyMeter, FrequencyMeterPort};
-
 // ============================================================================
 
 /// Store all the usefull objects for the application
-pub struct PicohaPwm {
-    /// To manage delay
-    delay: cortex_m::delay::Delay,
-
+pub struct PicohaPwm
+{
     /// Buffer to hold incomnig data
     usb_buffer: UsbBuffer<512>,
-
 
     /// Period value
     pub period: u32,
 
     /// Pulsewidth value
     pub pulsewidth: u32,
+
+    /// Frequency meter instance
+    pub freqmeter: FrequencyMeter<
+        hal::pac::PIO0,
+        hal::gpio::bank0::Gpio14,
+        hal::gpio::bank0::Gpio15,
+        hal::gpio::bank0::Gpio18,
+        hal::gpio::bank0::Gpio19,
+        hal::gpio::FunctionPio0,
+        hal::gpio::FunctionPio0,
+        hal::gpio::FunctionPio0,
+        hal::gpio::FunctionPio0>,
 }
 
 // ============================================================================
 
 /// Implementation of the App
-impl PicohaPwm {
-
+impl PicohaPwm
+{
     // ------------------------------------------------------------------------
 
     /// Application intialization
     pub fn new(
-        delay: cortex_m::delay::Delay,
-        //pins: rp_pico::Pins,
+        resets: &mut hal::pac::RESETS,
+        pio: hal::pac::PIO0,
+        pins: rp_pico::Pins,
     ) -> Self {
+
+        let freqmeter = FrequencyMeter::new(
+            resets, pio, 
+            pins.gpio14.into_mode(),
+            pins.gpio15.into_mode(),
+            pins.gpio18.into_mode(),
+            pins.gpio19.into_mode()
+        );
+
         Self {
-            delay:      delay,
             usb_buffer: UsbBuffer::new(),
+            freqmeter,
 
             period: 0,
             pulsewidth: 0,
@@ -80,11 +95,23 @@ impl PicohaPwm {
 
     /// Process PWM read command
     ///
-    fn process_readpwm(&self, _cmd: &Command) -> Answer {
-        let highp = (self.period as f32) / PIO_DIVISOR;
-        let lowp = (self.pulsewidth as f32) / PIO_DIVISOR;
+    fn process_readpwm(&self, cmd: &Command) -> Answer {
+        match protocol::Target::from_u8(cmd.target) {
+            Some(x) => match x {
+                Target::Input0 => Answer::mes_answer(x, self.freqmeter.port0.highp_us(), self.freqmeter.port0.lowp_us()),
+                Target::Input1 => Answer::mes_answer(x, self.freqmeter.port1.highp_us(), self.freqmeter.port1.lowp_us()),
+                Target::Input2 => Answer::mes_answer(x, self.freqmeter.port2.highp_us(), self.freqmeter.port2.lowp_us()),
+                Target::Input3 => Answer::mes_answer(x, self.freqmeter.port3.highp_us(), self.freqmeter.port3.lowp_us()),
 
-        Answer::mes_answer(Target::Unknown, highp, lowp)
+                other => Answer::error(other, AnswerText::from_str("Expected input target").unwrap()),
+            }
+
+            None => {
+                let mut txt = AnswerText::new();
+                write!(txt, "Uknown target {}", cmd.target).unwrap();
+                Answer::error(Target::Unknown, txt)
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -144,3 +171,5 @@ impl PicohaPwm {
         self.usb_buffer.load(buf, count);
     }
 }
+
+unsafe impl Send for PicohaPwm {}
