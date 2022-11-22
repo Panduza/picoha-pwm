@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Serialize_repr};
 use heapless::String;
 
-use super::PIO_DIVISOR;
-
 // ============================================================================
 
 /// Max message string length in answer

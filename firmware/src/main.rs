@@ -52,6 +52,9 @@ mod application;
 mod platform;
 
 use application::PicohaPwm;
+use application::protocol::Answer;
+
+use application::freqmeter::FrequencyMeter;
 
 
 
@@ -60,7 +63,12 @@ use application::PicohaPwm;
 use cortex_m::interrupt as cmit;
 use cortex_m::interrupt::CriticalSection;
 
-use core::cell::UnsafeCell;
+use core::cell::RefCell;
+
+use cmit::Mutex;
+use cortex_m::asm;
+
+static mut LED_PIN: RefCell<Option<Pin<hal::gpio::bank0::Gpio25, PushPullOutput>>> = RefCell::new(None);
 
 // ============================================================================
 scoped_interrupts! {
@@ -72,24 +80,6 @@ scoped_interrupts! {
     use #[interrupt];
 }
 // ============================================================================
-
-struct AppCell(UnsafeCell<PicohaPwm>);
-
-unsafe impl Sync for AppCell {}
-
-impl AppCell {
-    pub fn new(app: PicohaPwm) -> Self {
-        Self(UnsafeCell::new(app))
-    }
-
-    pub fn action<F>(&self, func: F, _cs: &CriticalSection)
-        where F: FnOnce(PicohaPwm) -> ()
-    {
-        unsafe { func(*self.0.get()) };
-    }
-
-    pub fn update_command_processing(&self, _cs:&CriticalSection) -> 
-}
 
 /// Entry point to our bare-metal application.
 ///
@@ -145,22 +135,46 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let led = pins.led.into_push_pull_output();
+    unsafe {
+        LED_PIN.replace(Some(led));
+    }
+
     //===============================================
     // Test for PIO PWM Input
     //===============================================
 
+    // Init. freqmeter
+    let freqmeter = Mutex::new(RefCell::new(FrequencyMeter::new(
+        &mut pac.RESETS,
+        pac.PIO0,
+
+        pins.gpio14.into_mode::<FunctionPio0>(),
+        pins.gpio15.into_mode::<FunctionPio0>(),
+        pins.gpio18.into_mode::<FunctionPio0>(),
+        pins.gpio19.into_mode::<FunctionPio0>(),
+    )));
+
     // Init. the app
     let mut app = application::PicohaPwm::new(
         &mut pac.RESETS,
-        pac.PIO0,
-        pins,
+        || { cmit::free(|cs| {let fm = freqmeter.borrow(cs).borrow(); (fm.port0.highp_us(), fm.port0.lowp_us())}) },
+        || { cmit::free(|cs| {let fm = freqmeter.borrow(cs).borrow(); (fm.port1.highp_us(), fm.port1.lowp_us())}) },
+        || { cmit::free(|cs| {let fm = freqmeter.borrow(cs).borrow(); (fm.port2.highp_us(), fm.port2.lowp_us())}) },
+        || { cmit::free(|cs| {let fm = freqmeter.borrow(cs).borrow(); (fm.port3.highp_us(), fm.port3.lowp_us())}) },
     );
 
-    let mut app = AppCell::new(app);
+    //let mut app = application::PicohaPwm::new(
+    //    &mut pac.RESETS,
+    //    || (0.0,0.0),
+    //    || (0.0,0.0),
+    //    || (0.0,0.0),
+    //    || (0.0,0.0)
+    //);
 
     // Define handlers
     handler!(pio0_isr = || {
-        cmit::free(|cs| app.action(|x| x.freqmeter.irq_handler(cs), cs));
+        cmit::free(|cs| freqmeter.borrow(cs).borrow_mut().irq_handler(cs));
     });
 
 
@@ -174,16 +188,16 @@ fn main() -> ! {
 
         // Enable interrupt
         cmit::free(|cs| {
-            app.action(|app| app.freqmeter.irq_enable(cs), cs);
+            freqmeter.borrow(cs).borrow_mut().irq_enable(cs);
         });
 
         cmit::free(|cs| {
-            app.action(|app| {
-                app.freqmeter.port0.start();
-                app.freqmeter.port1.start();
-                app.freqmeter.port2.start();
-                app.freqmeter.port3.start();
-            }, cs)
+            let freqmeter  = freqmeter.borrow(cs).borrow_mut();
+
+            freqmeter.port0.start();
+            freqmeter.port1.start();
+            freqmeter.port2.start();
+            freqmeter.port3.start();
         });
 
         let mut ans_buffer = [0u8; 1024];
@@ -196,13 +210,13 @@ fn main() -> ! {
                     Ok(0)  => {}
 
                     Ok(count) => {
-                        cmit::free(|cs| app.action(|app| app.feed_cmd_buffer(&buf, count), cs));
+                        app.feed_cmd_buffer(&buf, count);
                     }
                 }
             }
 
             // Update app command process
-            match cmit::free(|cs| app.action(|app| app.update_command_processing())) {
+            match app.update_command_processing() {
                 None           => {},
                 Some(response) => {
                     match serde_json_core::to_slice(&response, &mut ans_buffer) {
@@ -221,6 +235,11 @@ fn main() -> ! {
 
 // ============================================================================
 
+#[inline]
+fn us_to_cycles(x: f32) -> u32{
+    (x * 125.0) as u32
+}
+
 // PANIC MANAGEMENT
 use core::panic::PanicInfo;
 #[panic_handler]
@@ -237,7 +256,22 @@ unsafe fn panic(_info: &PanicInfo) -> ! {
     //    .write(_info.location().unwrap().line().numtoa(10, &mut tmp_buf))
     //    .ok();
     //self.usb_serial.write(b"\"}\r\n").ok();
+
     loop {
+        unsafe {
+            let mut borrow = LED_PIN.borrow_mut();
+
+            match borrow.as_mut() {
+                Some(led) => {
+                    led.set_high().ok();
+                    cortex_m::asm::delay(us_to_cycles(100_000.0));
+                    led.set_low().ok();
+                    cortex_m::asm::delay(us_to_cycles(100_000.0));
+                },
+
+                None => {}
+            }
+        }
         // self.led_pin.set_high().ok();
         // self.delay.delay_ms(100);
         // self.led_pin.set_low().ok();

@@ -26,7 +26,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::cell::Cell;
 
 
-const PIO_DIVISOR: f32 = 125.0 / 2.0; // Divisor to transform tick count into microseconds
+const PIO_DIVISOR: f32 = 62.5; // Divisor to transform tick count into microseconds
 
 // =========================================================
 enum StateMachineVariant<SM: ValidStateMachine> {
@@ -84,9 +84,9 @@ where
         unsafe {
             // Build program in state machine
             let (sm, rx, _) = PIOBuilder::from_program(installed.share())
-                .clock_divisor(0.0)
                 .jmp_pin(Index::DYN.num)
                 .in_pin_base(Index::DYN.num)
+                .clock_divisor(1.0)
                 .build(sm);
 
             Self {
@@ -99,7 +99,7 @@ where
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&self) {
         let sm = self.sm.take();
         
         if let StateMachineVariant::Stopped(sm) = sm {
@@ -107,7 +107,7 @@ where
         }
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         let sm = self.sm.take();
 
         if let StateMachineVariant::Running(sm) = sm {
@@ -131,6 +131,14 @@ where
 
     pub fn lowp_us(&self) -> f32 {
         (self.lowp.load(Ordering::Relaxed) as f32) / PIO_DIVISOR
+    }
+
+    pub fn highp_tick(&self) -> u32 {
+        self.highp.load(Ordering::Relaxed)
+    }
+
+    pub fn lowp_tick(&self) -> u32 {
+        self.lowp.load(Ordering::Relaxed)
     }
 
 }
@@ -257,7 +265,7 @@ where
         pio.clear_irq(pio.get_irq_raw());
     }
 
-    pub fn irq_enable(&mut self, cs: &CriticalSection) {
+    pub fn irq_enable(&self, cs: &CriticalSection) {
         let pio = self.pio.borrow(cs);
         pio.interrupts().get(0).unwrap().enable_sm_interrupt(0);
     }

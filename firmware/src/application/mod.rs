@@ -9,14 +9,13 @@ use core::write;
 use core::fmt::Write;
 
 // Frequency meter
-mod freqmeter;
-use freqmeter::FrequencyMeter;
+pub mod freqmeter;
 
 // Protocol
-mod protocol;
+pub mod protocol;
 use protocol::{Answer, AnswerText, Command, CommandCode, Target};
 
-const PIO_DIVISOR: f32 = 62.5; // Divisor to convert count cycles -> us
+use cortex_m::interrupt::CriticalSection;
 
 // ============================================================================
 
@@ -36,58 +35,51 @@ use buffer::UsbBuffer;
 // ============================================================================
 
 /// Store all the usefull objects for the application
-pub struct PicohaPwm
+pub struct PicohaPwm<FuncReadPort0, FuncReadPort1, FuncReadPort2, FuncReadPort3>
+where
+    FuncReadPort0: Fn() -> (f32, f32),
+    FuncReadPort1: Fn() -> (f32, f32),
+    FuncReadPort2: Fn() -> (f32, f32),
+    FuncReadPort3: Fn() -> (f32, f32),
 {
     /// Buffer to hold incomnig data
     usb_buffer: UsbBuffer<512>,
 
-    /// Period value
-    pub period: u32,
-
-    /// Pulsewidth value
-    pub pulsewidth: u32,
-
-    /// Frequency meter instance
-    pub freqmeter: FrequencyMeter<
-        hal::pac::PIO0,
-        hal::gpio::bank0::Gpio14,
-        hal::gpio::bank0::Gpio15,
-        hal::gpio::bank0::Gpio18,
-        hal::gpio::bank0::Gpio19,
-        hal::gpio::FunctionPio0,
-        hal::gpio::FunctionPio0,
-        hal::gpio::FunctionPio0,
-        hal::gpio::FunctionPio0>,
+    /// Callbacks to read ports
+    read_port0: FuncReadPort0,
+    read_port1: FuncReadPort1,
+    read_port2: FuncReadPort2,
+    read_port3: FuncReadPort3,
 }
 
 // ============================================================================
 
 /// Implementation of the App
-impl PicohaPwm
+impl<FuncReadPort0, FuncReadPort1, FuncReadPort2, FuncReadPort3> PicohaPwm<FuncReadPort0, FuncReadPort1, FuncReadPort2, FuncReadPort3> where
+    FuncReadPort0: Fn() -> (f32, f32,),
+    FuncReadPort1: Fn() -> (f32, f32,),
+    FuncReadPort2: Fn() -> (f32, f32,),
+    FuncReadPort3: Fn() -> (f32, f32,),
 {
     // ------------------------------------------------------------------------
 
     /// Application intialization
     pub fn new(
         resets: &mut hal::pac::RESETS,
-        pio: hal::pac::PIO0,
-        pins: rp_pico::Pins,
-    ) -> Self {
 
-        let freqmeter = FrequencyMeter::new(
-            resets, pio, 
-            pins.gpio14.into_mode(),
-            pins.gpio15.into_mode(),
-            pins.gpio18.into_mode(),
-            pins.gpio19.into_mode()
-        );
+        read_port0: FuncReadPort0,
+        read_port1: FuncReadPort1,
+        read_port2: FuncReadPort2,
+        read_port3: FuncReadPort3,
+    ) -> Self {
 
         Self {
             usb_buffer: UsbBuffer::new(),
-            freqmeter,
 
-            period: 0,
-            pulsewidth: 0,
+            read_port0,
+            read_port1,
+            read_port2,
+            read_port3,
         }
     }
 
@@ -95,13 +87,13 @@ impl PicohaPwm
 
     /// Process PWM read command
     ///
-    fn process_readpwm(&self, cmd: &Command) -> Answer {
+    fn process_readpwm(&self, cmd: &Command, cs: &CriticalSection) -> Answer {
         match protocol::Target::from_u8(cmd.target) {
             Some(x) => match x {
-                Target::Input0 => Answer::mes_answer(x, self.freqmeter.port0.highp_us(), self.freqmeter.port0.lowp_us()),
-                Target::Input1 => Answer::mes_answer(x, self.freqmeter.port1.highp_us(), self.freqmeter.port1.lowp_us()),
-                Target::Input2 => Answer::mes_answer(x, self.freqmeter.port2.highp_us(), self.freqmeter.port2.lowp_us()),
-                Target::Input3 => Answer::mes_answer(x, self.freqmeter.port3.highp_us(), self.freqmeter.port3.lowp_us()),
+                Target::Input0 => { let (highp, lowp) = (self.read_port0)(); Answer::mes_answer(x, highp, lowp) },
+                Target::Input1 => { let (highp, lowp) = (self.read_port1)(); Answer::mes_answer(x, highp, lowp) },
+                Target::Input2 => { let (highp, lowp) = (self.read_port2)(); Answer::mes_answer(x, highp, lowp) },
+                Target::Input3 => { let (highp, lowp) = (self.read_port3)(); Answer::mes_answer(x, highp, lowp) },
 
                 other => Answer::error(other, AnswerText::from_str("Expected input target").unwrap()),
             }
@@ -142,7 +134,7 @@ impl PicohaPwm
                         match CommandCode::from_u8(data.cod) {
                             Some(x) => match x {
                                 CommandCode::Test         => Some(Answer::ok(Target::Unknown, AnswerText::from_str("").unwrap())),
-                                CommandCode::ReadPwm      => Some(self.process_readpwm(&data)),
+                                CommandCode::ReadPwm      => Some(cortex_m::interrupt::free(|cs| self.process_readpwm(&data, cs))),
 
                                 _  => {
                                     let mut txt = AnswerText::new();
@@ -171,5 +163,3 @@ impl PicohaPwm
         self.usb_buffer.load(buf, count);
     }
 }
-
-unsafe impl Send for PicohaPwm {}
