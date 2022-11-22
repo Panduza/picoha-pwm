@@ -194,6 +194,16 @@ fn main() -> ! {
 
         let mut ans_buffer = [0u8; 1024];
         loop {
+            // Trigger ports
+            cmit::free(|cs| {
+                let mut freqmeter = freqmeter.borrow(cs).borrow_mut();
+
+                freqmeter.port0.trigger();
+                freqmeter.port1.trigger();
+                freqmeter.port2.trigger();
+                freqmeter.port3.trigger();
+            });
+
             // Update USB
             if usb_device.poll(&mut [&mut usb_serial]) {
                 let mut buf = [0u8; 1024];

@@ -19,6 +19,7 @@
 
 .wrap_target
 start:
+    out null,32         ; Empty OSR register
     mov y, ~null        ; start with the value 0xFFFFFFFF
     mov x, ~null        ; start with the value 0xFFFFFFFF
     wait 0 pin 0        ; wait for a 0
@@ -37,5 +38,8 @@ timerstop:
     push noblock        ; push the ISR into the Rx FIFO
     mov isr ~x          ; move the value ~x to the ISR: the low period (0xFFFFFFFF-x)
     push noblock        ; push the ISR into the Rx FIFO
+wait_trigger:
+    pull block
+    out null,32         ; Discard OSR data
     irq 0 rel           ; notify the c-program via IRQ
 .wrap

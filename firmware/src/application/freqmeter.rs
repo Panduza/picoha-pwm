@@ -10,6 +10,7 @@ use rp_pico::hal::{pio::{
 
     StateMachine,
     Rx,
+    Tx,
     StateMachineIndex,
     ValidStateMachine,
     UninitStateMachine, InstalledProgram,
@@ -61,6 +62,9 @@ where
     /// RX Fifo instance
     rx: Rx<(P,SM)>,
 
+    /// TX Fifo instance
+    tx: Tx<(P,SM)>,
+
     /// High period tick count
     highp: AtomicU32,
 
@@ -83,7 +87,7 @@ where
     {
         unsafe {
             // Build program in state machine
-            let (sm, rx, _) = PIOBuilder::from_program(installed.share())
+            let (sm, rx, tx) = PIOBuilder::from_program(installed.share())
                 .jmp_pin(Index::DYN.num)
                 .in_pin_base(Index::DYN.num)
                 .clock_divisor(1.0)
@@ -93,6 +97,7 @@ where
                 pin,
                 sm: Cell::new(StateMachineVariant::Stopped(sm)),
                 rx,
+                tx,
                 highp: AtomicU32::new(0),
                 lowp: AtomicU32::new(0),
             }
@@ -113,6 +118,10 @@ where
         if let StateMachineVariant::Running(sm) = sm {
             self.sm.replace(StateMachineVariant::Stopped(sm.stop()));
         }
+    }
+
+    pub fn trigger(&mut self) {
+        self.tx.write(0xdeabeefu32);
     }
 
     pub fn irq_handler(&mut self) {
