@@ -164,14 +164,6 @@ fn main() -> ! {
         || { cmit::free(|cs| {let fm = freqmeter.borrow(cs).borrow(); (fm.port3.highp_us(), fm.port3.lowp_us())}) },
     );
 
-    //let mut app = application::PicohaPwm::new(
-    //    &mut pac.RESETS,
-    //    || (0.0,0.0),
-    //    || (0.0,0.0),
-    //    || (0.0,0.0),
-    //    || (0.0,0.0)
-    //);
-
     // Define handlers
     handler!(pio0_isr = || {
         cmit::free(|cs| freqmeter.borrow(cs).borrow_mut().irq_handler(cs));

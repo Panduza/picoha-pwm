@@ -267,6 +267,11 @@ where
 
     pub fn irq_enable(&self, cs: &CriticalSection) {
         let pio = self.pio.borrow(cs);
-        pio.interrupts().get(0).unwrap().enable_sm_interrupt(0);
+        let it  = pio.interrupts().get(0).unwrap();
+
+        it.enable_sm_interrupt(0);
+        it.enable_sm_interrupt(1);
+        it.enable_sm_interrupt(2);
+        it.enable_sm_interrupt(3);
     }
 }
